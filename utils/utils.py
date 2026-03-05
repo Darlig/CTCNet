@@ -12,15 +12,17 @@ import librosa
 import torch
 import cv2
 import numpy as np
-from torch._six import string_classes
-import collections.abc
+import collections.abc as container_abcs
+#from torch._six import string_classes, int_classes
 import json
 import shutil
 import matplotlib.pyplot as plt
+
+string_classes = (str,)
+int_classes = (int,)
+
 plt.switch_backend('Agg') 
 plt.ioff()
-
-int_classes = int
 
 def warpgrid(bs, HO, WO, warp=True):
     # meshgrid
@@ -113,11 +115,23 @@ def read_video(filename):
             break
     cap.release()
 
-def save2npz(filename, data=None):
-    assert data is not None, "data is {}".format(data)
+# def save2npz(filename, data=None):
+#     assert data is not None, "data is {}".format(data)
+#     if not os.path.exists(os.path.dirname(filename)):
+#         os.makedirs(os.path.dirname(filename))
+#     np.savez_compressed(filename, data=data)
+
+def save2npz(filename, data=None, **arrays):
+    # import numpy as np
+
     if not os.path.exists(os.path.dirname(filename)):
         os.makedirs(os.path.dirname(filename))
-    np.savez_compressed(filename, data=data)
+    if data is not None:
+        if isinstance(data, list):
+            data = np.array(data, dtype=object)  # 关键：允许 ragged
+        np.savez_compressed(filename, data=data, **arrays)
+    else:
+        np.savez_compressed(filename, **arrays)
 
 def mkdirs(path, remove=False):
     if os.path.isdir(path):
@@ -166,9 +180,9 @@ def object_collate(batch):
         return torch.tensor(batch)
     elif isinstance(batch[0], string_classes):
         return batch
-    elif isinstance(batch[0], collections.abc.Mapping):
+    elif isinstance(batch[0], container_abcs.Mapping):
         return {key: object_collate([d[key] for d in batch]) for key in batch[0]}
-    elif isinstance(batch[0], collections.abc.Sequence):
+    elif isinstance(batch[0], container_abcs.Sequence):
         transposed = zip(*batch)
         return [object_collate(samples) for samples in transposed]
 

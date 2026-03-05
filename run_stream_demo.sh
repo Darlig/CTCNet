@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python tools/run_stream.py \
+  --conf local/vox2_10w_conf_64_64_3_adamw_1e-1_blocks16_pretrain_test.yml \
+  --checkpoint pretrained_model/vox2_best_model.pt \
+  --audio test_videos/interview_visualvoice/interview.wav \
+  --video test_videos/interview_visualvoice/faces/speaker1.mp4 \
+  --landmark-npz test_videos/interview_visualvoice/landmark/speaker1.npz \
+  --mouthroi-mode online \
+  --output outputs/stream_spk1.wav \
+  --sample-rate 16000 \
+  --fps 25 \
+  --chunk-ms 80 \
+  --hop-ms 80 \
+  --window-ms 2000 \
+  --lookahead-ms 0 \
+  --max-video-queue 200 \
+  --realtime 1 \
+  --stats-interval-s 1.0 \
+  "$@"

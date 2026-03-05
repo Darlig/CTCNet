@@ -1,0 +1,11 @@
+av==11.0.0
+face_alignment==1.4.1
+facenet_pytorch==2.5.3
+librosa==0.10.1
+matplotlib==3.7.0
+mmcv==2.1.0
+numpy==1.23.5
+Pillow==9.4.0
+Pillow==10.2.0
+scikit_image==0.19.3
+torch==1.12.1

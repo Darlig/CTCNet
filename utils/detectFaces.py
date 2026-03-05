@@ -49,6 +49,33 @@ def bb_intersection_over_union(boxA, boxB):
     # return the intersection over union value
     return iou
 
+
+def clamp_box(box, w, h):
+    # box: [x1, y1, x2, y2]
+    x1, y1, x2, y2 = box
+    x1 = max(0, min(w - 1, x1))
+    y1 = max(0, min(h - 1, y1))
+    x2 = max(0, min(w, x2))
+    y2 = max(0, min(h, y2))
+    # ensure proper ordering and non-zero area
+    if x2 <= x1:
+        x2 = min(w, x1 + 1)
+    if y2 <= y1:
+        y2 = min(h, y1 + 1)
+    return [x1, y1, x2, y2]
+
+
+def default_center_box(frame, scale=1.0):
+    # Returns a square box centered in the frame.
+    w, h = frame.size  # PIL Image
+    side = int(min(w, h) * 0.9 * scale)
+    cx, cy = w / 2.0, h / 2.0
+    x1 = cx - side / 2.0
+    y1 = cy - side / 2.0
+    x2 = cx + side / 2.0
+    y2 = cy + side / 2.0
+    return clamp_box([x1, y1, x2, y2], w, h)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--video_input_path', type=str, required=True)
@@ -76,22 +103,56 @@ def main():
     print("Video statistics: ", video.width, video.height, video.resolution, video.fps)
     frames = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in video]
     print('Number of frames in video: ', len(frames))
-    fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, flip_input=False)
+    fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False)
 
     for i, frame in enumerate(frames):
         print('\rTracking frame: {}'.format(i + 1), end='')
         
         # Detect faces
         if i % args.detect_every_N_frame == 0:
-            boxes, _ = mtcnn.detect(frame)
-            boxes = boxes[:args.number_of_speakers]
-            boxes = face2head(boxes, args.scalar_face_detection)
-        else:
-            boxes = [boxes_dic[j][-1] for j in range(args.number_of_speakers)]
+            det_boxes, _ = mtcnn.detect(frame)
+            if det_boxes is None:
+                det_boxes = []
+            else:
+                det_boxes = det_boxes.tolist()
 
-        # Crop faces and save landmarks for each speaker
+            # Keep at most N detections
+            det_boxes = det_boxes[:args.number_of_speakers]
+
+            # Expand to head boxes and clamp to frame
+            if len(det_boxes) > 0:
+                det_boxes = face2head(det_boxes, args.scalar_face_detection)
+                w, h = frame.size
+                det_boxes = [clamp_box(b, w, h) for b in det_boxes]
+
+            boxes = det_boxes
+        else:
+            # Use last known boxes if available
+            boxes = []
+
+        # Ensure we have exactly `number_of_speakers` boxes.
+        # If detection failed early (e.g., frame 0), do NOT index empty history.
         if len(boxes) != args.number_of_speakers:
-            boxes = [boxes_dic[j][-1] for j in range(args.number_of_speakers)]
+            if i == 0:
+                # On the first frame, if we don't have enough detections, skip tracking this frame.
+                # We'll try again on subsequent frames.
+                print(f"\n[WARN] Frame 0: detected {len(boxes)} faces, need {args.number_of_speakers}. Skipping this frame.")
+                continue
+
+            # For later frames, fall back to last known boxes where possible.
+            fallback_boxes = []
+            w, h = frame.size
+            for j in range(args.number_of_speakers):
+                if len(boxes_dic[j]) > 0:
+                    fallback_boxes.append(boxes_dic[j][-1])
+                elif len(boxes) > 0:
+                    # If we detected at least one face this frame, reuse the first detection.
+                    fallback_boxes.append(boxes[0])
+                else:
+                    # Last resort: centered crop
+                    fallback_boxes.append(default_center_box(frame))
+
+            boxes = fallback_boxes
         
         for j,box in enumerate(boxes):
             face = frame.crop((box[0], box[1], box[2], box[3])).resize((224,224))
@@ -117,9 +178,15 @@ def main():
             # Draw faces
             frame_draw = frame.copy()
             draw = ImageDraw.Draw(frame_draw)
-            draw.rectangle(boxes_dic[s][i], outline=(255, 0, 0), width=6) 
-            # Add to frame list
-            frames_tracked.append(frame_draw)
+#            print("len of boxes_dic[{}] is: {}".format(s, len(boxes_dic[s])))
+#            print("draw.rectangle(boxes_dic[{}][{}]...".format(s, i))
+            try:
+              draw.rectangle(boxes_dic[s][i], outline=(255, 0, 0), width=6)
+            except Exception as e:
+              print(e)
+            finally:
+              # Add to frame list
+              frames_tracked.append(frame_draw)
         dim = frames_tracked[0].size
         fourcc = cv2.VideoWriter_fourcc(*'FMP4')    
         video_tracked = cv2.VideoWriter(os.path.join(args.output_path, 'video_tracked' + str(s+1) + '.mp4'), fourcc, 25.0, dim)
@@ -128,10 +195,15 @@ def main():
         video_tracked.release()
 
     # Save landmarks
-    for i in range(args.number_of_speakers):    
+    for i in range(args.number_of_speakers):
         utils.save2npz(os.path.join(args.output_path, 'landmark', 'speaker' + str(i+1)+'.npz'), data=landmarks_dic[i])
-        dim = face.size
-        fourcc = cv2.VideoWriter_fourcc(*'FMP4')    
+
+        if len(faces_dic[i]) == 0:
+            print(f"[WARN] No faces tracked for speaker {i+1}; skipping faces video.")
+            continue
+
+        dim = faces_dic[i][0].size
+        fourcc = cv2.VideoWriter_fourcc(*'FMP4')
         speaker_video = cv2.VideoWriter(os.path.join(args.output_path, 'faces', 'speaker' + str(i+1) + '.mp4'), fourcc, 25.0, dim)
         for frame in faces_dic[i]:
             speaker_video.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))

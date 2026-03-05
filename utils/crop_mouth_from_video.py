@@ -50,6 +50,42 @@ mean_face_landmarks = np.load(args.mean_face)
 stablePntsIDs = [33, 36, 39, 42, 45]
 
 
+
+def ensure_float_landmarks(lm_seq, required_idx_max: int):
+    """
+    lm_seq: list/np.ndarray(dtype=object), each element should be (P,2) landmarks or None
+    return: np.ndarray float32 of shape (T, P, 2) with missing frames filled.
+    """
+    # allow_pickle load gives ndarray(object) sometimes; normalize to python list
+    if isinstance(lm_seq, np.ndarray) and lm_seq.dtype == object:
+        lm_seq = lm_seq.tolist()
+
+    fixed = []
+    last_valid = None
+
+    # first pass: find first valid frame (for filling leading missings)
+    first_valid = None
+    for x in lm_seq:
+        if isinstance(x, np.ndarray) and x.ndim == 2 and x.shape[1] == 2 and x.shape[0] > required_idx_max:
+            first_valid = x.astype(np.float32, copy=False)
+            break
+
+    if first_valid is None:
+        raise RuntimeError("No valid landmarks found in this utterance (all frames missing or wrong shape).")
+
+    last_valid = first_valid
+
+    for x in lm_seq:
+        if isinstance(x, np.ndarray) and x.ndim == 2 and x.shape[1] == 2 and x.shape[0] > required_idx_max:
+            cur = x.astype(np.float32, copy=False)
+            last_valid = cur
+            fixed.append(cur)
+        else:
+            # fill missing / bad frames with last valid
+            fixed.append(last_valid)
+
+    return np.stack(fixed, axis=0).astype(np.float32, copy=False)
+
 def crop_patch( video_pathname, landmarks):
 
     """Crop mouth patch
@@ -171,6 +207,10 @@ for filename_idx, line in enumerate(lines):
     preprocessed_landmarks = landmarks_interpolate(landmarks)
     if not preprocessed_landmarks:
         continue
+
+    required_idx_max = int(np.max(stablePntsIDs))
+    # landmark_npz 是你从 npz 里读出来的 data
+    preprocessed_landmarks = ensure_float_landmarks(landmarks, required_idx_max)
 
     # -- crop
     sequence = crop_patch(video_pathname, preprocessed_landmarks)

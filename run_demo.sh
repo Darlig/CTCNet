@@ -1,0 +1,1 @@
+python eval_singlevideo_test.py --conf_dir local/vox2_10w_conf_64_64_3_adamw_1e-1_blocks16_pretrain_test.yml
